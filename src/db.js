@@ -19,10 +19,14 @@ const buildConnectionString = () => {
   );
 
   if (missing.length > 0) {
-    throw new Error(
+    // Log clearly so the Railway log stream shows exactly what is missing,
+    // then throw so callers can decide whether to crash or retry later.
+    const msg =
       `Missing required Postgres environment variable(s): ${missing.join(', ')}. ` +
-      'Ensure PGHOST, PGPORT, PGUSER, PGPASSWORD, and PGDATABASE are set as reference variables from the Postgres service in Railway.'
-    );
+      'Ensure PGHOST, PGPORT, PGUSER, PGPASSWORD, and PGDATABASE are set as ' +
+      'reference variables from the Postgres service in Railway.';
+    console.error(`❌ DB config error: ${msg}`);
+    throw new Error(msg);
   }
 
   // Encode user/password to handle special characters safely in the URL.
@@ -48,10 +52,32 @@ const getPool = () => {
   return _pool;
 };
 
-// Proxy object so existing callers (`pool.query(...)`) continue to work unchanged.
+// Tracks whether createTables() has successfully run at least once so we
+// don't repeat the DDL on every query.
+let _tablesCreated = false;
+
+// Ensures tables exist before the first real query is executed.  Subsequent
+// calls are no-ops once _tablesCreated is true.
+const ensureTablesCreated = async () => {
+  if (_tablesCreated) return;
+  try {
+    await createTables();
+    _tablesCreated = true;
+  } catch (err) {
+    // Don't block the query — the caller will surface its own error if the
+    // table genuinely doesn't exist yet.
+    console.warn('⚠️  ensureTablesCreated: table creation deferred —', err.message);
+  }
+};
+
+// Proxy object so existing callers (`pool.query(...)`) continue to work
+// unchanged, while transparently running ensureTablesCreated() on first use.
 const pool = new Proxy({}, {
   get(_target, prop) {
-    return (...args) => getPool()[prop](...args);
+    return async (...args) => {
+      await ensureTablesCreated();
+      return getPool()[prop](...args);
+    };
   },
 });
 

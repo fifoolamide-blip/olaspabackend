@@ -33,15 +33,19 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
+  // Always start the HTTP server first so Railway's health checks pass
+  // even if the Postgres reference variables haven't resolved yet.
+  app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+  // Attempt an eager table-creation pass, but never crash the process on
+  // failure — the pool is lazy-loaded, so tables will be created on the
+  // first real query once the variables are available.
   try {
     await createTables();
-    console.log('✅ PostgreSQL connected');
-    app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+    console.log('✅ PostgreSQL tables ready');
   } catch (err) {
-    console.error('❌ Database connection error:');
-    console.error(err);
-    if (err.stack) console.error(err.stack);
-    process.exit(1);
+    console.warn('⚠️  Startup table creation skipped — will retry on first query.');
+    console.warn(err.message);
   }
 };
 
