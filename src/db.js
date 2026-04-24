@@ -1,22 +1,51 @@
 const { Pool } = require('pg');
 
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error('DATABASE_URL is required in your environment configuration.');
-}
+// DATABASE_URL may be a Railway reference variable placeholder (e.g. "${{ Postgres.DATABASE_URL }}")
+// at module-load time if the dependent service hasn't resolved it yet. Using a lazy-loaded pool
+// ensures the variable is read only when the first query is made, by which point Railway will
+// have expanded it to the real connection string.
+let _pool = null;
 
-const pool = new Pool({
-  connectionString,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  connectionTimeoutMillis: 10000,
-});
+const getPool = () => {
+  if (_pool) return _pool;
 
-pool.on('error', (err) => {
-  console.error('Unexpected PostgreSQL client error:', err);
+  const connectionString = process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    throw new Error('DATABASE_URL is not set. Ensure the Postgres service is linked to this service in Railway.');
+  }
+
+  if (connectionString.includes('${{')) {
+    throw new Error(
+      `DATABASE_URL contains an unresolved Railway reference variable: "${connectionString}". ` +
+      'Ensure the Postgres service is deployed and the variable reference is correct.'
+    );
+  }
+
+  _pool = new Pool({
+    connectionString,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 10000,
+  });
+
+  _pool.on('error', (err) => {
+    console.error('Unexpected PostgreSQL client error:', err);
+  });
+
+  console.log('🔌 PostgreSQL pool initialised');
+  return _pool;
+};
+
+// Proxy object so existing callers (`pool.query(...)`) continue to work unchanged.
+const pool = new Proxy({}, {
+  get(_target, prop) {
+    return (...args) => getPool()[prop](...args);
+  },
 });
 
 const createTables = async () => {
-  await pool.query(`
+  const p = getPool();
+  await p.query(`
     CREATE TABLE IF NOT EXISTS services (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
@@ -31,7 +60,7 @@ const createTables = async () => {
     );
   `);
 
-  await pool.query(`
+  await p.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
@@ -42,7 +71,7 @@ const createTables = async () => {
     );
   `);
 
-  await pool.query(`
+  await p.query(`
     CREATE TABLE IF NOT EXISTS bookings (
       id SERIAL PRIMARY KEY,
       user_name TEXT NOT NULL,
