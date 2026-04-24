@@ -1,26 +1,38 @@
 const { Pool } = require('pg');
 
-// DATABASE_URL may be a Railway reference variable placeholder (e.g. "${{ Postgres.DATABASE_URL }}")
-// at module-load time if the dependent service hasn't resolved it yet. Using a lazy-loaded pool
-// ensures the variable is read only when the first query is made, by which point Railway will
-// have expanded it to the real connection string.
+// Constructs the Postgres connection string from individual PG* environment variables
+// (PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE) injected as Railway reference variables
+// from the Postgres service. This avoids relying on a single DATABASE_URL reference variable,
+// which Railway does not always expand correctly across services. The pool is lazy-loaded so
+// the variables are read only when the first query is made.
 let _pool = null;
+
+const buildConnectionString = () => {
+  const host     = process.env.PGHOST;
+  const port     = process.env.PGPORT     || '5432';
+  const user     = process.env.PGUSER;
+  const password = process.env.PGPASSWORD;
+  const database = process.env.PGDATABASE;
+
+  const missing = ['PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE'].filter(
+    (key) => !process.env[key]
+  );
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required Postgres environment variable(s): ${missing.join(', ')}. ` +
+      'Ensure PGHOST, PGPORT, PGUSER, PGPASSWORD, and PGDATABASE are set as reference variables from the Postgres service in Railway.'
+    );
+  }
+
+  // Encode user/password to handle special characters safely in the URL.
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
+};
 
 const getPool = () => {
   if (_pool) return _pool;
 
-  const connectionString = process.env.DATABASE_URL;
-
-  if (!connectionString) {
-    throw new Error('DATABASE_URL is not set. Ensure the Postgres service is linked to this service in Railway.');
-  }
-
-  if (connectionString.includes('${{')) {
-    throw new Error(
-      `DATABASE_URL contains an unresolved Railway reference variable: "${connectionString}". ` +
-      'Ensure the Postgres service is deployed and the variable reference is correct.'
-    );
-  }
+  const connectionString = buildConnectionString();
 
   _pool = new Pool({
     connectionString,
