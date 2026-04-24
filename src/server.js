@@ -1,10 +1,10 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 require('dotenv').config();
 
+const { createTables } = require('./db');
 const serviceRoutes = require('./routes/serviceRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -32,13 +32,15 @@ app.use(errorHandler);
 // Database + Server
 const PORT = process.env.PORT || 5000;
 
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log('✅ MongoDB connected');
+const startServer = async () => {
+  try {
+    await createTables();
+    console.log('✅ PostgreSQL connected');
     app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-  })
-  .catch((err) => {
-    console.error('❌ MongoDB connection error:', err.message);
+  } catch (err) {
+    console.error('❌ Database connection error:', err.message);
     process.exit(1);
-  });
+  }
+};
+
+startServer();
