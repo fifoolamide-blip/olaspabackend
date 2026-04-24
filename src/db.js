@@ -8,6 +8,11 @@ if (!connectionString) {
 const pool = new Pool({
   connectionString,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  connectionTimeoutMillis: 10000,
+});
+
+pool.on('error', (err) => {
+  console.error('Unexpected PostgreSQL client error:', err);
 });
 
 const createTables = async () => {
